@@ -1,0 +1,189 @@
+-- Find sales over time per item combined with item cost, sales price, and profit
+
+SELECT
+	extract(year from sales.date) as year_of_sale,
+	extract(month from sales.date) as month_of_sale,
+	sales.date as date_of_sale,
+    sales.item_code as items,
+    items.item_name as name,
+    sales.unit_selling_price,
+    prices.wholesale_price,
+    sales.unit_selling_price - prices.wholesale_price as profit,
+    sales.quantity_sold,
+    sales.quantity_sold * (sales.unit_selling_price - prices.wholesale_price) as total_profit,
+    items.category_name as category
+FROM
+	store_produce_sales.sales_info as sales
+JOIN
+	store_produce_sales.item_price as prices ON
+    sales.date = prices.date
+JOIN
+	store_produce_sales.item_info as items ON
+    sales.item_code = items.item_code
+WHERE 
+	sales.item_code = prices.item_code;
+
+-- Find the income brought in for each item 
+    
+SELECT
+ 	extract(year from date) as yos,
+    extract(month from date) as mos,
+	item_code,
+    item,
+    round(sum(income),2) as sum_income
+FROM
+( 
+	SELECT
+		sales.item_code,
+		sum(sales.quantity_sold) as items_sold,
+		sales.unit_selling_price,
+		sum(sales.quantity_sold) * sales.unit_selling_price as income,
+        sales.date as date,
+        info.item_name as item
+	FROM
+		store_produce_sales.sales_info as sales
+	JOIN 
+		store_produce_sales.item_info as info ON
+        sales.item_code = info.item_code
+	WHERE
+		sales.quantity_sold > 0
+    GROUP BY 1, sales.unit_selling_price, 5
+   ) as temp_sales
+group by item_code, yos, mos
+ORDER BY sum_income desc;
+
+-- find the top 5 performing items over the entire 3 year period
+
+SELECT
+	item_code,
+    item,
+    round(sum(income),2) as sum_income
+FROM
+( 
+	SELECT
+		sales.item_code,
+		sum(sales.quantity_sold) as items_sold,
+		sales.unit_selling_price,
+		sum(sales.quantity_sold) * sales.unit_selling_price as income,
+        sales.date as date,
+        info.item_name as item
+	FROM
+		store_produce_sales.sales_info as sales
+	JOIN 
+		store_produce_sales.item_info as info ON
+        sales.item_code = info.item_code
+	WHERE
+		sales.quantity_sold > 0
+    GROUP BY 1, sales.unit_selling_price, 5
+   ) as temp_sales
+group by item_code
+ORDER BY sum_income desc
+LIMIT 5;
+
+-- Sales and Returns per day by item
+
+SELECT 
+	sales.date,
+    info.item_name as item,
+    count(case when sales.sale_or_return = 'sale' then 1 end) as items_sold_per_day,
+    sum(case when sales.sale_or_return = 'sale' then sales.quantity_sold end) as kilos_sold_per_day,
+	count(case when sales.sale_or_return = 'return' then 1 end) as returns_per_day,
+    sum(case when sales.sale_or_return = 'return' then sales.quantity_sold end) as kilos_sold_per_day,
+    count(sales.sale_or_return) as total_transactions
+FROM
+	store_produce_sales.sales_info as sales
+JOIN
+	store_produce_sales.item_info as info ON
+    sales.item_code = info.item_code
+GROUP BY date, info.item_name;
+
+-- Discounts per day
+
+SELECT 
+	sales.date,
+    info.item_name as item,
+    count(case when sales.discount = 'no' then 1 end) as full_price_per_day,
+	sum(case when sales.discount = 'no' then sales.quantity_sold end) as kilos_sold_per_day_fp,
+	count(case when sales.discount = 'yes' then 1 end) as discounted_per_day,
+    sum(case when sales.discount = 'yes' then sales.quantity_sold end) as kilos_sold_per_day_discount,
+    count(sales.discount) as total_transactions
+FROM
+	store_produce_sales.sales_info as sales
+JOIN
+	store_produce_sales.item_info as info ON
+    sales.item_code = info.item_code
+GROUP BY date, info.item_name;
+
+-- relationship between loss and returns
+
+SELECT 
+    info.item_name as item,
+	count(case when sales.sale_or_return = 'return' then 1 end) as returns,
+    losses.loss_rate
+FROM
+	store_produce_sales.sales_info as sales
+JOIN
+	store_produce_sales.item_info as info ON
+    sales.item_code = info.item_code
+JOIN
+	store_produce_sales.loss_rate as losses ON
+    info.item_name = losses.item_name 
+GROUP BY info.item_name,3;
+
+-- percent change by month
+
+SELECT
+	concat(years, ", ",months) as dates,
+	years,
+    months,
+    incomes,
+    lag(incomes) OVER (order by years, months) as previous,
+    round(100 * (incomes - LAG(incomes) OVER(ORDER BY years, months)) / incomes,2) AS percent_change
+FROM
+(
+	SELECT
+			years,
+			months,
+			round(sum(income),2) as incomes
+	FROM 
+	(  
+		SELECT
+			extract(year from sales.date) as years,
+			extract(month from sales.date) as months,
+			sales.item_code,
+			sales.quantity_sold * sales.unit_selling_price as income
+		FROM
+			store_produce_sales.sales_info as sales
+		GROUP BY
+			1,2,3,4
+	) as temp_income
+	GROUP BY 1,2
+    )as temp2
+GROUP BY 2,3;
+
+-- Growth rates by year
+
+SELECT
+	years,
+    incomes,
+    lag(incomes) OVER (order by years) as previous,
+    round(100 * (incomes - LAG(incomes) OVER(ORDER BY years)) / incomes,2) AS percent_change
+FROM
+(
+	SELECT
+			years,
+			round(sum(income),2) as incomes
+	FROM 
+	(  
+		SELECT
+			extract(year from sales.date) as years,
+			sales.item_code,
+			sales.quantity_sold * sales.unit_selling_price as income
+		FROM
+			store_produce_sales.sales_info as sales
+		GROUP BY
+			1,2,3
+	) as temp_income
+	GROUP BY 1
+    )as temp2
+GROUP BY 1;
